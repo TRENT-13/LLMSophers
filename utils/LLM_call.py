@@ -1,0 +1,26 @@
+import os
+from dotenv import load_dotenv
+from langchain_openai import ChatOpenAI
+def _load_llm_OPEN(model_name : str, temperature: float) -> ChatOpenAI:
+    load_dotenv()
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("Missing OPENAI_API_KEY in environment. Very bad naughty naughty!")
+    model_name = model_name
+    return ChatOpenAI(model=model_name, api_key=api_key, temperature=temperature)
+
+
+
+def _load_llm_deepseek(model_name: str, temperature: float) -> ChatOpenAI:
+    load_dotenv()
+
+    api_key = os.getenv("DEEPSEEK_API_KEY")
+    if not api_key:
+        raise ValueError("Missing DEEPSEEK_API_KEY in environment")
+
+    return ChatOpenAI(
+        model=model_name,
+        api_key=api_key,
+        base_url="https://api.deepseek.com",
+        temperature=temperature,
+    )
