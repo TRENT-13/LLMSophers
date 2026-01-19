@@ -186,17 +186,23 @@ class AgentState(TypedDict):
     question_type: str  # math, physics, etc.
     field: str  # STEM, etc.
     
+    # Agent identities
+    agent_names: dict  # Maps agent_id (GPT-1, etc.) to chosen name (e.g., "Augustus")
+    
     # Judge election
-    judge_arguments: list[dict]  # Each LLM's argument for who should be judge
-    elected_judge: str  # Which LLM was elected as judge
-    judge_votes: dict  # Vote 
+    election_responses: list[dict]  # Each agent's initial response/argument
+    judge_votes: dict  # Vote tallies by chosen name
+    elected_judge_name: str  # The chosen name of elected judge
+    elected_judge_id: str  # The ID (GPT-1, etc.) of elected judge
+    solver_ids: list[str]  # List of non-judge agent IDs
+    solver_names: list[str]  # List of non-judge agent names
     
     # Solving phase
-    solver_answers: list[dict]  # multiple solvers provide answers
+    solver_answers: list[dict]  # Multiple solvers provide answers
     best_answer: str  # Best answer selected from solvers
     
     # Critique phase
-    critic_feedback: list[str]  # multiple critics provide feedback
+    critic_feedback: list[str]  # Multiple critics provide feedback
     
     # Final phase
     refined_answer: str
@@ -221,3 +227,232 @@ LLM_AGENTS = {
 
 
 
+# lets name the agents
+def agent_naming() -> dict:
+    """
+    Phase 1: Each agent chooses a distinguished name for themselves
+    
+    Args:
+        question: The question that will be solved
+    
+    Returns:
+        dict: Maps agent_id to chosen name
+    """
+    naming_prompt = f"""you are the  agent, name yourself whatever name you like, like George, Napoleon,Augustus...
+    Choose a distinguished name for yourself - something memorable
+    RESPOND WITH ONLY 1 WORD: [Your chosen name]
+    """
+    agent_names = {}
+
+    for agent_id, llm in LLM_AGENTS.items():
+        prompt = naming_prompt.format(question=question)
+        response = llm.invoke([HumanMessage(content=prompt)]) 
+        name = response.content
+        agent_names[agent_id] = name
+        print(f"  {agent_id:12} → {chosen_name}")
+
+    return agent_names
+
+
+def run_agent_deliberation(question: str, agent_names: dict) -> list:
+    """
+    Phase 2: Each agent analyzes the question and argues who should be judge
+    
+    Args:
+        question: The question to be solved
+        agent_names: Maps agent_id to chosen name
+    
+    Returns:
+        list: Each agent's deliberation response
+    """
+    agents_list = "\n".join([f"  • {agent_names[aid]} (Agent {aid})" for aid in LLM_AGENTS.keys()])
+    deliberation_prompt = """You are {my_name} (Agent {my_id}), participating in a democratic process to elect a judge.
+
+    CONTEXT: You and three other AI agents will collaboratively solve this problem. First, you must elect one agent to serve as the judge who will make the final verdict. The other three agents will work as solvers.
+
+    QUESTION TO SOLVE:
+    {question}
+
+    PARTICIPATING AGENTS:
+    {agents_list}
+
+    YOUR TASK:
+    1. Analyze what specific qualities and expertise the judge needs for THIS question
+    2. Recommend which agent should be the judge (you may recommend yourself or another)
+    3. Provide detailed reasoning for your recommendation
+
+    NOTE: You will vote AFTER seeing all arguments. For now, just make your case.
+
+    RESPOND IN THIS FORMAT:
+    Analysis: [What makes this question unique? What expertise does the judge need?]
+    Recommendation: [Name of agent who should be judge]
+    Reasoning: [Why this agent is the best choice for judging THIS specific question]"""
+    deliberation_responses = []
+    for agent_id, llm in LLM_AGENTS.items():
+        prompt = deliberation_prompt.format(
+            my_name=agent_names[agent_id],
+            my_id=agent_id,
+            question=question,
+            agents_list=agents_list
+        )
+        response = llm.invoke([HumanMessage(content=prompt)])
+        deliberation_responses.append({
+            "agent_id": agent_id,
+            "agent_name": agent_names[agent_id],
+            "response": response.content
+        })
+        print(f"  ✓ {agent_names[agent_id]} completed deliberation")
+    return deliberation_responses
+
+
+
+def run_agent_voting(question: str, agent_names: dict, deliberation_responses: list) -> tuple:
+    """
+    Phase 3: Each agent sees all deliberations and casts their vote
+    
+    Args:
+        question: The question to be solved
+        agent_names: Maps agent_id to chosen name
+        deliberation_responses: All agents' deliberation arguments
+    
+    Returns:
+        tuple: (votes dict, vote_details list)
+    """
+    # Format all deliberations for sharing
+    all_arguments = "\n\n".join([
+        f"--- {resp['agent_name']}'s Argument ---\n{resp['response']}"
+        for resp in deliberation_responses
+    ])
+    
+    voting_prompt = """You are {my_name} (Agent {my_id}). You've just heard all arguments about who should be the judge.
+
+    CONTEXT: You are electing one agent to serve as judge for this problem. The judge will make the final verdict after three solvers work on the solution. This is a critical decision.
+
+    QUESTION TO SOLVE:
+    {question}
+
+    ALL ARGUMENTS:
+    {all_arguments}
+
+    YOUR TASK:
+    Now that you've heard everyone's arguments, cast your vote for who should be the judge. Consider:
+    - Who made the most compelling argument?
+    - Which agent has the right qualities for THIS specific question?
+    - Who would be the fairest and most capable judge?
+
+    RESPOND WITH ONLY:
+    Vote: [Name of agent you're voting for]
+    Justification: [One sentence explaining why you chose this agent]"""
+        
+    votes = {agent_names[aid]: 0 for aid in LLM_AGENTS.keys()}
+    vote_details = []
+    
+    print("="*80)
+    print("PHASE 3: VOTING")
+    print("="*80)
+    
+    for agent_id, llm in LLM_AGENTS.items():
+        prompt = voting_prompt.format(
+            my_name=agent_names[agent_id],
+            my_id=agent_id,
+            question=question,
+            all_arguments=all_arguments
+        )
+        
+        response = llm.invoke([HumanMessage(content=prompt)])
+        
+        # Parse vote - match any of the agent names
+        vote_cast = None
+        response_lower = response.content.lower()
+        for aid, name in agent_names.items():
+            if name.lower() in response_lower:
+                vote_cast = name
+                votes[name] += 1
+                break
+        
+        # If no match, try to extract from "Vote:" line
+        if not vote_cast:
+            vote_match = re.search(r'Vote:\s*([A-Za-z]+)', response.content)
+            if vote_match:
+                potential_name = vote_match.group(1)
+                for aid, name in agent_names.items():
+                    if name.lower() == potential_name.lower():
+                        vote_cast = name
+                        votes[name] += 1
+                        break
+        
+        vote_details.append({
+            "voter": agent_names[agent_id],
+            "voted_for": vote_cast or "Unknown",
+            "justification": response.content
+        })
+        print(f"  🗳️  {agent_names[agent_id]:12} voted for: {vote_cast or 'Unknown'}")
+    
+    print("="*80 + "\n")
+    return votes, vote_details
+
+
+def judge_election_node(state: WorkflowState) -> WorkflowState:
+    """
+    Democratic judge election with three phases:
+    1. Agent naming
+    2. Agent deliberation
+    3. Agent voting
+    """
+    question = state["question"]
+    
+    # Phase 1: Agents choose their names
+    agent_names = run_agent_naming(question)
+    
+    # Phase 2: Agents make arguments for who should be judge
+    deliberation_responses = run_agent_deliberation(question, agent_names)
+    
+    # Phase 3: Agents see all arguments and vote
+    votes, vote_details = run_agent_voting(question, agent_names, deliberation_responses)
+    
+    # Determine winner
+    elected_judge_name = max(votes, key=votes.get)
+    elected_judge_id = [aid for aid, name in agent_names.items() if name == elected_judge_name][0]
+    
+    # Identify solvers (non-judge agents)
+    solver_ids = [aid for aid in LLM_AGENTS.keys() if aid != elected_judge_id]
+    solver_names = [agent_names[aid] for aid in solver_ids]
+    
+    # Parse question type from first deliberation
+    field = "STEM"
+    question_type = "general"
+    first_analysis = deliberation_responses[0]["response"].lower()
+    if "math" in first_analysis:
+        question_type = "math"
+    elif "physic" in first_analysis:
+        question_type = "physics"
+    elif "chemistry" in first_analysis or "chemical" in first_analysis:
+        question_type = "chemistry"
+    
+    print("="*80)
+    print(f" ELECTED JUDGE: {elected_judge_name} ({elected_judge_id})")
+    print(f"Vote Results: {votes}")
+    print(f"Solvers: {', '.join(solver_names)}")
+    print("="*80 + "\n")
+    
+    return {
+        **state,
+        "agent_names": agent_names,
+        "election_responses": deliberation_responses,
+        "judge_votes": votes,
+        "elected_judge_name": elected_judge_name,
+        "elected_judge_id": elected_judge_id,
+        "solver_ids": solver_ids,
+        "solver_names": solver_names,
+        "field": field,
+        "question_type": question_type,
+        "messages": [
+            AIMessage(
+                content=f"Judge Election Complete:\n"
+                        f"Elected: {elected_judge_name} ({elected_judge_id})\n"
+                        f"Votes: {votes}\n"
+                        f"Solvers: {', '.join(solver_names)}",
+                name="election_system"
+            )
+        ]
+    }
