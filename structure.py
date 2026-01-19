@@ -189,14 +189,14 @@ class AgentState(TypedDict):
     # Judge election
     judge_arguments: list[dict]  # Each LLM's argument for who should be judge
     elected_judge: str  # Which LLM was elected as judge
-    judge_votes: dict  # Vote tallies
+    judge_votes: dict  # Vote 
     
     # Solving phase
-    solver_answers: list[dict]  # Multiple solvers provide answers
+    solver_answers: list[dict]  # multiple solvers provide answers
     best_answer: str  # Best answer selected from solvers
     
     # Critique phase
-    critic_feedback: list[str]  # Multiple critics provide feedback
+    critic_feedback: list[str]  # multiple critics provide feedback
     
     # Final phase
     refined_answer: str
