@@ -1,4 +1,4 @@
-from utils.LLM_call import _load_llm_OPEN, _load_llm_deepseek
+from utils.LLM_call import _load_llm_OPEN, _load_llm_deepseek, _load_llm_OPEN5
 from functools import lru_cache
 import io
 import json
@@ -8,7 +8,12 @@ import sys
 import operator
 from pathlib import Path
 from typing import Any, Dict, List, TypedDict, Annotated
-
+import numpy as np
+import pandas as pd
+from dotenv import load_dotenv
+from langchain_core.messages import HumanMessage, ToolMessage, AIMessage
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph, END
 
 """
 Model of the project is the following: wer are going to use Langgraph for the project, 
@@ -161,12 +166,105 @@ def dataset_creation():
             "question": (
                 "A person stands at the edge of a pond and observes a stone on the bottom. The depth of the pond is h. How far from the water's surface is the virtual image of the stone if the ray of vision makes an angle theta with the normal to the water surface?"
             ),
-            "answer": "\frac{\hbar n^3 \cos^3 \theta}{\left(n^3 - \sin^3 \theta\right)^{3/2}}"
-        }
+            "answer": r"\frac{\hbar n^3 \cos^3 \theta}{\left(n^3 - \sin^3 \theta\right)^{3/2}}"
+        },
+        #   -------------------- LOGIC  --------------------   
+        {
+        "field": "STEM",
+        "type": "logic",
+        "question": "On an island of Knights (always tell truth) and Knaves (always lie), you meet three inhabitants: A, B, and C. A says 'B is a knave'. B says 'A and C are of the same type'. C says 'I have the same type as B'. Determine the type of each inhabitant.",
+        "answer": "A is a Knight, B is a Knave, C is a Knave."
+        },
+        {
+            "field": "STEM",
+            "type": "logic",
+            "question": "Five friends (Alice, Bob, Charlie, David, Eve) represent 5 different colors (Red, Blue, Green, Yellow, White) and own 5 different pets (Dog, Cat, Fish, Bird, Snake). 1. The Green owner has a Snake. 2. Alice does not own the Red color. 3. Bob owns the Dog. 4. The White color owner is immediately to the right of the Green owner. 5. David owns the Cat and is next to the Blue owner. 6. Eve is on the far left. 7. The Bird owner is in the middle spot. 8. The Red owner is next to the Dog owner. Who owns the Fish?",
+            "answer": "Eve owns the Fish."
+        },
+        {
+            "field": "STEM",
+            "type": "game_theory",
+            "question": "Two distinct integers are chosen from the set {2, 3, ..., 99}. One integer is given to Alice (product P) and the other to Bob (sum S). Alice says 'I don't know the numbers'. Bob says 'I knew you didn't know'. Alice says 'Now I know the numbers'. Bob says 'Now I know the numbers too'. What are the two numbers? (This is a classic incomplete information game known as the Sum and Product Puzzle).",
+            "answer": "4 and 13"
+        },
+        {
+            "field": "STEM",
+            "type": "game_theory",
+            "question": "Consider a Second-Price Sealed-Bid Auction (Vickrey Auction) for an antique vase. You value the vase at $500. Your opponent's valuation is unknown to you but is drawn from a uniform distribution between $0 and $1000. What is your optimal bidding strategy (b) to maximize expected utility?",
+            "answer": "Bid exactly your valuation: b = $500."
+        },
+        {
+            "field": "STEM",
+            "type": "logic",
+            "question": "Three logic professors (A, B, C) are shown 5 stamps: 2 red and 3 green. They are blindfolded, and one stamp is pasted on each of their foreheads. The remaining 2 are hidden. When blindfolds are removed, A is asked if she knows her color. She says 'No'. B is asked; he says 'No'. C is asked; she says 'Yes'. What color is C's stamp and why?",
+            "answer": "Green. C deduces this because if C were Red, B would have seen a Red on C. If A also had Red, B would have known B was Green immediately (since there are only 2 Reds). Even if A had Green, B would have realized that if C was Red, B must be Green to prevent A from knowing. Since B didn't know, C cannot be Red."
+        },
+
+        #  -------------------- GAME THEORY  --------------------
+        {
+            "field": "STEM",
+            "type": "game_theory",
+            "question": "Five rational pirates (A, B, C, D, E) find 100 gold coins. They must propose a distribution plan. The strict order of seniority is A > B > C > D > E. The most senior pirate proposes a split. All vote (including the proposer). If 50% or more vote 'yes', the plan passes. Otherwise, the proposer is thrown overboard and the next senior proposes. Pirates maximize their gold first, and prefer survival second. What is the optimal proposal for Pirate A?",
+            "answer": "A: 98, B: 0, C: 1, D: 0, E: 1"
+        },
+        {
+            "field": "STEM",
+            "type": "logic",
+            "question": "A census taker approaches a house and asks about the ages of the three children inside. The woman says, 'The product of their ages is 36. The sum of their ages is the house number next door.' The census taker looks at the house number but says, 'I still need more information.' The woman replies, 'The oldest is sleeping upstairs.' What are the ages of the children?",
+            "answer": "9, 2, and 2."
+        },
+        {
+            "field": "STEM",
+            "type": "game_theory",
+            "question": "In a game of Nim, there are three heaps of coins with sizes 3, 4, and 5. Two players take turns removing any number of coins from a single heap. The player to take the last coin wins. Is the current position a winning or losing position for the first player, and what is the 'Nim-sum' of this configuration?",
+            "answer": "Winning position. Nim-sum = 3 XOR 4 XOR 5 = 011 ^ 100 ^ 101 = 010 (binary) = 2. Winning move is to reduce a heap to make Nim-sum 0 (e.g., change heap of 3 to 1)."
+        },
+        {
+            "field": "STEM",
+            "type": "game_theory",
+            "question": "Consider a Cournot Duopoly where two firms produce identical goods. The inverse demand function is P = 120 - Q, where Q = q1 + q2. The marginal cost for both firms is constant at 0. Find the Nash Equilibrium quantities (q1, q2) for the two firms.",
+            "answer": "q1 = 40, q2 = 40"
+        },
+        {
+            "field": "STEM",
+            "type": "logic",
+            "question": "You have 12 coins that look identical. One is counterfeit and weighs slightly different (heavier or lighter, you don't know) than the others. You have a balance scale and can use it exactly 3 times. Construct a strategy to isolate the fake coin and determine if it is heavier or lighter.",
+            "answer": "Weigh 4 vs 4. Case 1 (Equal): Fake is in the remaining 4. Weigh 3 normal vs 3 remaining. If equal, last one is fake (weigh against normal to find bias). If unequal, you know bias, weigh 1 vs 1. Case 2 (Unequal): We now know the group containing the fake and potential biases. Perform a mixed swap (e.g., 3 from heavy side, 3 from light side, etc.) to isolate."
+        },
+        {
+            "field": "STEM",
+            "type": "game_theory",
+            "question": "Two criminals are arrested. If both remain silent, they get 1 year each. If one betrays (confesses) and the other is silent, the betrayer goes free and the silent one gets 3 years. If both betray, they get 2 years each. This is a one-shot game. Identify the Nash Equilibrium strategy profile.",
+            "answer": "{Betray, Betray}"
+        },
+        {
+            "field": "STEM",
+            "type": "logic",
+            "question": "Four people need to cross a rickety bridge at night. They have one flashlight. The bridge holds at most two people. Any party crossing must carry the flashlight. The people walk at different speeds: 1 min, 2 mins, 5 mins, and 10 mins. When two people walk together, they walk at the slower person's speed. What is the minimum time required for all four to cross?",
+            "answer": "17 minutes. (Order: 1&2 cross (2), 1 returns (1), 5&10 cross (10), 2 returns (2), 1&2 cross (2). Total: 2+1+10+2+2 = 17)."
+        },
+        {
+            "field": "STEM",
+            "type": "game_theory",
+            "question": "Consider the 'Battle of the Sexes' game. Husband prefers Opera (Payoff: H=3, W=1), Wife prefers Football (Payoff: H=1, W=3). If they go to different places, both get 0. Find the Mixed Strategy Nash Equilibrium probability (p) that the Husband goes to the Opera.",
+            "answer": "p = 3/4 (Husband chooses Opera with probability 3/4, Wife chooses Football with probability 3/4)."
+        },
+        {
+            "field": "STEM",
+            "type": "logic",
+            "question": "Three gods A, B, and C are called True, False, and Random. True always speaks truth, False always lies, but Random answers randomly. You must determine who is who by asking 3 yes/no questions. Each question is directed at only one god. The gods understand English but answer in their own language: 'da' and 'ja', but you don't know which means yes and which means no. What is the first question you should ask to eliminate 'Random' as a possibility for one specific candidate?",
+            "answer": "Ask God B: 'If I asked you 'Is God A Random?', would you say 'ja'?' (If B answers 'ja', then C is not Random. If B answers 'da', then A is not Random)."
+        },
+        {
+            "field": "STEM",
+            "type": "game_theory",
+            "question": "Two players play a game where they take turns placing a penny on a round table. The coins cannot overlap and must not hang off the edge. The last player to fit a coin on the table wins. The table is finite. What is the winning strategy for Player 1?",
+            "answer": "Player 1 places the first coin exactly in the center of the table. For every subsequent move by Player 2 at position P, Player 1 places a coin at position -P (symmetrically opposite across the center)."
+        },
     ]
 
     df = pd.DataFrame(data)
-    df.to_pickle("data")
+    df.to_pickle("dataset.pkl")
     return df
 
 @lru_cache(maxsize=1)
@@ -174,7 +272,7 @@ def load_dataset():
     import pandas as pd
 
     try:
-        df = pd.read_pickle("data")
+        df = pd.read_pickle("dataset.pkl")
     except FileNotFoundError:
         df = dataset_creation()
     return df
@@ -213,16 +311,16 @@ class AgentState(TypedDict):
 
 
 
-gpt1 = _load_llm_OPEN(model_name="gpt-4o-mini", temperature=0.0)
-gpt2 = _load_llm_OPEN(model_name="gpt-5-mini", temperature=0.0)
-deepseek1 = _load_llm_deepseek(model_name="DeepSeek-V3.2", temperature=0)
-deepseek2 = _load_llm_deepseek(model_name="deepseek-reasoner", temperature=0)
+gpt1 = _load_llm_OPEN5(model_name="gpt-5") # do not use gpt 5 nano
+gpt2 = _load_llm_OPEN(model_name="gpt-4o-mini", temperature=0.0)
+deepseek1 = _load_llm_deepseek(model_name="deepseek-chat", temperature=0)
+deepseek2 = _load_llm_deepseek(model_name="deepseek-reasoner", temperature=0.3)
 
 LLM_AGENTS = {
-    "GPT-1": llm_gpt1,
-    "GPT-2": llm_gpt2,
-    "DeepSeek-1": llm_deepseek1,
-    "DeepSeek-2": llm_deepseek2
+    "GPT-1": gpt1,
+    "GPT-2": gpt2,
+    "DeepSeek-1": deepseek1,
+    "DeepSeek-2": deepseek2
 }
 
 
@@ -232,25 +330,27 @@ def agent_naming() -> dict:
     """
     Phase 1: Each agent chooses a distinguished name for themselves
     
-    Args:
-        question: The question that will be solved
-    
     Returns:
         dict: Maps agent_id to chosen name
     """
-    naming_prompt = f"""you are the  agent, name yourself whatever name you like, like George, Napoleon,Augustus...
-    Choose a distinguished name for yourself - something memorable
-    RESPOND WITH ONLY 1 WORD: [Your chosen name]
+    naming_prompt = """You are an AI agent. Choose a distinguished name for yourself - something memorable like George, Napoleon, Augustus, etc.
+    
+    RESPOND WITH ONLY ONE WORD: [Your chosen name]
     """
     agent_names = {}
 
+    print("="*80)
+    print("PHASE 1: AGENT NAMING")
+    print("="*80)
+    
     for agent_id, llm in LLM_AGENTS.items():
-        prompt = naming_prompt.format(question=question)
-        response = llm.invoke([HumanMessage(content=prompt)]) 
-        name = response.content
+        response = llm.invoke([HumanMessage(content=naming_prompt)]) 
+        name = response.content.strip()
         agent_names[agent_id] = name
-        print(f"  {agent_id:12} → {chosen_name}")
-
+        print(f"  {agent_id:12} → {name}")
+        print(f"     Response: {response.content}")
+    
+    print("="*80 + "\n")
     return agent_names
 
 
@@ -301,7 +401,10 @@ def run_agent_deliberation(question: str, agent_names: dict) -> list:
             "agent_name": agent_names[agent_id],
             "response": response.content
         })
-        print(f"  ✓ {agent_names[agent_id]} completed deliberation")
+        print(f"\n  ✓ {agent_names[agent_id]}'s Deliberation:")
+        print(f"  {'-'*60}")
+        print(f"  {response.content}")
+        print(f"  {'-'*60}")
     return deliberation_responses
 
 
@@ -386,13 +489,14 @@ def run_agent_voting(question: str, agent_names: dict, deliberation_responses: l
             "voted_for": vote_cast or "Unknown",
             "justification": response.content
         })
-        print(f"  🗳️  {agent_names[agent_id]:12} voted for: {vote_cast or 'Unknown'}")
+        print(f"\n  🗳️  {agent_names[agent_id]:12} voted for: {vote_cast or 'Unknown'}")
+        print(f"     Response: {response.content[:200]}..." if len(response.content) > 200 else f"     Response: {response.content}")
     
     print("="*80 + "\n")
     return votes, vote_details
 
 
-def judge_election_node(state: WorkflowState) -> WorkflowState:
+def judge_election_node(state: AgentState) -> AgentState:
     """
     Democratic judge election with three phases:
     1. Agent naming
@@ -401,10 +505,17 @@ def judge_election_node(state: WorkflowState) -> WorkflowState:
     """
     question = state["question"]
     
+    print("\n" + "#"*80)
+    print("# NODE 1: JUDGE ELECTION")
+    print("#"*80 + "\n")
+    
     # Phase 1: Agents choose their names
-    agent_names = run_agent_naming(question)
+    agent_names = agent_naming()
     
     # Phase 2: Agents make arguments for who should be judge
+    print("="*80)
+    print("PHASE 2: DELIBERATION")
+    print("="*80)
     deliberation_responses = run_agent_deliberation(question, agent_names)
     
     # Phase 3: Agents see all arguments and vote
@@ -456,3 +567,108 @@ def judge_election_node(state: WorkflowState) -> WorkflowState:
             )
         ]
     }
+
+
+
+def solver_node(state: AgentState) -> AgentState:
+    """
+    non-judge agents solve the questions
+    """
+    print("\n" + "#"*80)
+    print("# NODE 2: SOLVING PHASE")
+    print("#"*80 + "\n")
+    
+    question = state["question"]
+    question_type = state["question_type"]
+    field = state["field"]
+    solver_ids = state["solver_ids"]
+    agent_names = state["agent_names"]
+    elected_judge_name = state["elected_judge_name"]
+
+    solver_answers = []
+    for agent_id in solver_ids:
+        agent_name = agent_names[agent_id]
+        solution = generate_solver_solution(
+            agent_id, agent_name, question, 
+            question_type, field, elected_judge_name
+        )
+        solver_answers.append({
+            "agent_id": agent_id,
+            "agent_name": agent_name,
+            "answer": solution
+        })
+        print(f"  ✓ {agent_name} completed solution")
+    
+    combined_answers = "\n\n---\n\n".join([
+        f"Solution from {sol['agent_name']}:\n{sol['answer']}" 
+        for sol in solver_answers
+    ])
+    
+    print("="*80 + "\n")
+    
+    return {
+        **state,
+        "solver_answers": solver_answers,
+        "best_answer": combined_answers,
+        "messages": [
+            AIMessage(
+                content=f"Solutions from {', '.join([s['agent_name'] for s in solver_answers])}",
+                name="solver_team"
+            )
+        ]
+    }
+
+
+def generate_solver_solution(agent_id: str, agent_name: str, question: str, 
+                            question_type: str, field: str, judge_name: str) -> str:
+    """
+    Generate a solution from a single solver agent
+    
+    Args:
+        agent_id: The agent's ID
+        agent_name: The agent's chosen name
+        question: The problem to solve
+        question_type: Type of question (math, physics, etc.)
+        field: Field of study
+        judge_name: Name of the elected judge
+    
+    Returns:
+        str: The agent's solution
+    """
+    llm = LLM_AGENTS[agent_id]
+    
+    solver_prompt = """You are {agent_name}, one of three solvers working on this problem.
+
+        CONTEXT: {judge_name} was elected as the judge. You and two other agents are the solvers. After all three of you provide solutions, critics will evaluate them, and {judge_name} will make the final verdict.
+
+        PROBLEM TYPE: {question_type} in {field}
+
+        QUESTION:
+        {question}
+
+        YOUR TASK:
+        Provide a complete, detailed solution:
+        1. Explain your approach and reasoning
+        2. Show all steps and calculations
+        3. Clearly mark your final answer
+
+        Be thorough and rigorous in your work."""
+    
+    prompt = solver_prompt.format(
+        agent_name=agent_name,
+        judge_name=judge_name,
+        question_type=question_type,
+        field=field,
+        question=question
+    )
+    
+    response = llm.invoke([HumanMessage(content=prompt)])
+    
+    print(f"\n   {agent_name}'s Solution:")
+    print(f"  {'-'*70}")
+    # Show first 500 chars during execution
+    preview = response.content[:500] + "..." if len(response.content) > 500 else response.content
+    print(f"  {preview}")
+    print(f"  {'-'*70}")
+    
+    return response.content
