@@ -5,6 +5,9 @@ from structure import (
     load_dataset, 
     judge_election_node, 
     solver_node,
+    critic_node,
+    refinement_node,
+    final_verdict_node,
     AgentState
 )
 import random
@@ -12,7 +15,7 @@ import random
 
 def main():
     """
-    Main execution function - demonstrates the workflow
+    Main execution function - demonstrates the full collaborative workflow
     """
     print("\n" + "="*80)
     print("=" + " "*78 + "=")
@@ -24,9 +27,6 @@ def main():
     df = load_dataset()
     
     print("Dataset loaded with {} questions".format(len(df)))
-    print("\nAvailable question types:")
-    for idx, row in df.iterrows():
-        print(f"  [{idx}] {row['type']:10} - {row['question'][:80]}...")
     
     # Pick a random question
     selected_idx = random.randint(0, len(df) - 1)
@@ -42,7 +42,7 @@ def main():
     print("="*80 + "\n")
     
     # Initialize state
-    initial_state: AgentState = {
+    state: AgentState = {
         "question": selected_question['question'],
         "question_type": "",
         "field": "",
@@ -62,40 +62,42 @@ def main():
         "messages": []
     }
     
-    # Run Node 1: Judge Election
     try:
-        print("Starting Node 1: Judge Election...")
-        state_after_election = judge_election_node(initial_state)
+        # --- Node 1: Judge Election ---
+        print(">>> Starting Stage 1: Judge Election...")
+        state = judge_election_node(state)
+        
+        print(f"\n[Election Result] Judge: {state['elected_judge_name']} | Solvers: {', '.join(state['solver_names'])}")
+        
+        # --- Node 2: Solving Phase ---
+        print("\n>>> Starting Stage 2: Solving Phase...")
+        state = solver_node(state)
+        
+        print("\n[Solving Complete] Initial solutions generated.")
+        
+        # --- Node 3: Peer Review ---
+        print("\n>>> Starting Stage 3: Peer Review Phase...")
+        state = critic_node(state)
+        
+        print(f"\n[Review Complete] Generated {len(state['critic_feedback'])} critiques.")
+        
+        # --- Node 4: Refinement ---
+        print("\n>>> Starting Stage 4: Refinement Phase...")
+        state = refinement_node(state)
+        
+        print("\n[Refinement Complete] Solvers have updated their answers.")
+        
+        # --- Node 5: Final Verdict ---
+        print("\n>>> Starting Stage 5: Final Judgment...")
+        state = final_verdict_node(state)
         
         print("\n" + "="*80)
-        print("NODE 1 COMPLETE: Judge Election")
+        print("FINAL RESULT")
         print("="*80)
-        print(f"Elected Judge: {state_after_election['elected_judge_name']} ({state_after_election['elected_judge_id']})")
-        print(f"Solvers: {', '.join(state_after_election['solver_names'])}")
+        print(state['final_verdict'])
         print("="*80 + "\n")
         
-        # Run Node 2: Solving Phase
-        print("Starting Node 2: Solving Phase...")
-        state_after_solving = solver_node(state_after_election)
-        
-        print("\n" + "="*80)
-        print("NODE 2 COMPLETE: Solving Phase")
-        print("="*80)
-        print(f"Number of solutions: {len(state_after_solving['solver_answers'])}")
-        print("\n--- SOLUTIONS SUMMARY ---")
-        for sol in state_after_solving['solver_answers']:
-            print(f"\n{sol['agent_name']}'s Solution:")
-            print("-" * 40)
-            # Print first 300 chars of solution
-            solution_preview = sol['answer'][:300] + "..." if len(sol['answer']) > 300 else sol['answer']
-            print(solution_preview)
-        print("\n" + "="*80 + "\n")
-        
-        print("\n" + "="*80)
-        print("WORKFLOW DEMONSTRATION COMPLETE")
-        print("="*80)
-        
-        return state_after_solving
+        return state
         
     except Exception as e:
         print(f"\nERROR: {e}")

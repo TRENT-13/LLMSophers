@@ -1,4 +1,8 @@
-695035cd029b0_Final Project (1).pdf
+*.pdf
 langgraph_workflow.py
 *_pycache_*/
 .env
+venv/
+.venv/
+env/
+*.pkl
