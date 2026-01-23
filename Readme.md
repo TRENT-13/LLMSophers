@@ -33,32 +33,32 @@ The system follows a **5-stage workflow** implemented using **LangGraph** for st
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    Stage 0: Role Assignment                 │
-│  • Each LLM self-assesses preferred role (Solver/Judge)    │
+│  • Each LLM self-assesses preferred role (Solver/Judge)     │
 │  • Algorithmic assignment based on confidence scores        │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
 │              Stage 1: Independent Solution Generation       │
-│  • 3 Solvers generate solutions independently              │
-│  • No communication between solvers                        │
+│  • 3 Solvers generate solutions independently               │
+│  • No communication between solvers                         │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
 │                    Stage 2: Peer Review                     │
-│  • Each solver reviews the other two solutions             │
-│  • Structured feedback with strengths/weaknesses/errors   │
+│  • Each solver reviews the other two solutions              │
+│  • Structured feedback with strengths/weaknesses/errors     │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
 │              Stage 3: Refinement Based on Feedback          │
-│  • Solvers address critiques and refine solutions          │
-│  • Explicit acceptance/rejection of feedback               │
+│  • Solvers address critiques and refine solutions           │
+│  • Explicit acceptance/rejection of feedback                │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
-│                    Stage 4: Final Judgment                 │
-│  • Judge evaluates all solutions and selects best          │
-│  • Considers original solutions, reviews, and refinements  │
+│                    Stage 4: Final Judgment                  │
+│  • Judge evaluates all solutions and selects best           │
+│  • Considers original solutions, reviews, and refinements   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -215,7 +215,7 @@ Advanced batch processing system:
 
 1. **Clone the repository:**
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/TRENT-13/LLMSophers
    cd LLMSophers
    ```
 
