@@ -1,0 +1,86 @@
+================================================================================
+EXECUTION INSIGHTS AND METRICS
+================================================================================
+
+Generated: 2026-01-23 22:14:11
+
+KEY INSIGHTS:
+--------------------------------------------------------------------------------
+✓ Excellent success rate: 100.0% of problems completed successfully
+🎯 Overall System Accuracy: 96.9% (62/64 problems correct)
+🏆 Best Solver (Win Rate): DeepSeek-Strict with 85.2% win rate (46 wins)
+📉 Worst Solver (Win Rate): GPT-Creative with 2.0% win rate (1 wins)
+🎯 Most Accurate Solver: DeepSeek-Balanced with 100.0% accuracy
+⚖️ Best Judge (Accuracy): DeepSeek-Balanced with 100.0% accuracy in selecting correct solutions
+👑 Most Selected as Judge: GPT-Analytical (25 times, 39.1% of problems)
+💪 Most Active Solver: DeepSeek-Strict participated in 54 problems
+⏱️ Average execution time: 253.69 seconds per problem
+📚 Most common problem type: physics (20 problems)
+⚠️ Agent name uniqueness: 8.2% unique names. Found 14 duplicate names (disambiguation applied)
+📈 Judge selection varies by problem type, showing adaptive behavior
+
+
+DETAILED METRICS:
+--------------------------------------------------------------------------------
+Total Problems: 64
+Successful: 64
+Failed: 0
+Success Rate: 100.00%
+
+Execution Time Statistics:
+  Average: 253.69s
+  Median: 246.39s
+  Min: 146.61s
+  Max: 445.48s
+  Std Dev: 65.05s
+
+Judge Selection Counts:
+  DeepSeek-Balanced: 16
+  GPT-Analytical: 25
+  GPT-Creative: 13
+  DeepSeek-Strict: 10
+
+Problem Type Distribution:
+  math: 16
+  physics: 20
+  logic: 10
+  code: 3
+  spatial: 2
+  game_theory: 13
+
+================================================================================
+LLM PERFORMANCE METRICS
+================================================================================
+
+Overall System Accuracy:
+  Correct: 62
+  Incorrect: 2
+  Accuracy Rate: 96.88%
+
+LLM Win Rates (as Solver):
+  DeepSeek-Strict: 85.19% (46/54 wins)
+  DeepSeek-Balanced: 12.50% (6/48 wins)
+  GPT-Creative: 1.96% (1/51 wins)
+
+LLM Accuracy Rates (Correct Solutions):
+  DeepSeek-Balanced: 100.00% (6/6 correct)
+  GPT-Creative: 100.00% (1/1 correct)
+  DeepSeek-Strict: 97.83% (45/46 correct)
+
+LLM Judge Accuracy Rates:
+  DeepSeek-Balanced: 100.00% (16/16 correct)
+  DeepSeek-Strict: 100.00% (2/2 correct)
+  GPT-Analytical: 100.00% (23/23 correct)
+  GPT-Creative: 91.67% (11/12 correct)
+
+LLM Participation Counts:
+  As Solver:
+    DeepSeek-Strict: 54
+    GPT-Creative: 51
+    DeepSeek-Balanced: 48
+    GPT-Analytical: 39
+  As Judge:
+    GPT-Analytical: 25
+    DeepSeek-Balanced: 16
+    GPT-Creative: 13
+    DeepSeek-Strict: 10

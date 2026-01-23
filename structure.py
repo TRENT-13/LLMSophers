@@ -6,6 +6,8 @@ import os
 import re
 import sys
 import operator
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, List, TypedDict, Annotated
 import numpy as np
@@ -899,184 +901,213 @@ def agent_naming() -> dict:
     return agent_names
 
 
-def run_agent_deliberation(question: str, agent_names: dict) -> list:
-    agents_list = "\n".join([f"  • {agent_names[aid]} (Agent {aid})" for aid in LLM_AGENTS.keys()])
-    deliberation_prompt = """You are {my_name} (Agent {my_id}), participating in a democratic process to elect a judge.
-
-    CONTEXT: You and three other AI agents will collaboratively solve this problem. First, you must elect one agent to serve as the judge who will make the final verdict. The other three agents will work as solvers.
-
-    QUESTION TO SOLVE:
-    {question}
-
-    PARTICIPATING AGENTS:
-    {agents_list}
-
-    YOUR TASK:
-    1. Analyze what specific qualities and expertise the judge needs for THIS question
-    2. Recommend which agent should be the judge (you may recommend yourself or another)
-    3. Provide detailed reasoning for your recommendation
-
-    NOTE: You will vote AFTER seeing all arguments. For now, just make your case.
-
-    RESPOND IN THIS FORMAT:
-    Analysis: [What makes this question unique? What expertise does the judge need?]
-    Recommendation: [Name of agent who should be judge]
-    Reasoning: [Why this agent is the best choice for judging THIS specific question]
+def run_role_self_assessment(question: str, agent_names: dict) -> list:
     """
-    deliberation_responses = []
-    for agent_id, llm in LLM_AGENTS.items():
-        prompt = deliberation_prompt.format(
-            my_name=agent_names[agent_id],
-            my_id=agent_id,
-            question=question,
-            agents_list=agents_list
-        )
-        response = llm.invoke([HumanMessage(content=prompt)])
-        deliberation_responses.append({
-            "agent_id": agent_id,
-            "agent_name": agent_names[agent_id],
-            "response": response.content
-        })
-        print(f"\n  ✓ {agent_names[agent_id]}'s deliberation:")
-        print(f"  {'-'*60}")
-        print(f"  {response.content}")
-        print(f"  {'-'*60}")
-    return deliberation_responses
+    Stage 0: Each agent self-assesses which role they prefer (Solver or Judge)
+    and provides confidence scores.
+    """
+    self_assessment_prompt = """You are {my_name} (Agent {my_id}). You are participating in a collaborative problem-solving system.
 
-
-def run_agent_voting(question: str, agent_names: dict, deliberation_responses: list) -> tuple:
-    all_arguments = "\n\n".join([
-        f"--- {resp['agent_name']}'s Argument ---\n{resp['response']}"
-        for resp in deliberation_responses
-    ])
-    
-    voting_prompt = """You are {my_name} (Agent {my_id}). You've just heard all arguments about who should be the judge.
-
-    CONTEXT: You are electing one agent to serve as judge for this problem. The judge will make the final verdict after three solvers work on the solution. This is a critical decision.
+    CONTEXT: Four AI agents will work together to solve a problem. Three agents will be Solvers (independently solving the problem), and one agent will be the Judge (evaluating all solutions and selecting the best one).
 
     QUESTION TO SOLVE:
     {question}
 
-    ALL ARGUMENTS:
-    {all_arguments}
-
     YOUR TASK:
-    Now that you've heard everyone's arguments, cast your vote for who should be the judge. Consider:
-    - Who made the most compelling argument?
-    - Which agent has the right qualities for THIS specific question?
-    - Who would be the fairest and most capable judge?
+    Self-assess which role would be best for you for THIS specific question. Consider:
+    - Are you better at solving problems independently (Solver role)?
+    - Are you better at evaluating and comparing solutions (Judge role)?
+    - What is your confidence level for each role?
 
-    RESPOND WITH ONLY:
-    Vote: [Name of agent you're voting for]
-    Justification: [One sentence explaining why you chose this agent]"""
-        
-    votes = {agent_names[aid]: 0 for aid in LLM_AGENTS.keys()}
-    vote_details = []
+    RESPOND WITH VALID JSON ONLY (no markdown, no code blocks, just pure JSON):
+    {{
+        "role_preferences": ["Solver", "Judge"],
+        "confidence_by_role": {{
+            "Solver": 0.0-1.0,
+            "Judge": 0.0-1.0
+        }},
+        "reasoning": "I should be [Solver/Judge] because..."
+    }}
+
+    IMPORTANT: Provide confidence scores between 0.0 and 1.0 for both roles."""
+    
+    self_assessments = []
     
     print("="*80)
-    print("PHASE 3: VOTING")
+    print("STAGE 0: ROLE SELF-ASSESSMENT")
     print("="*80)
     
     for agent_id, llm in LLM_AGENTS.items():
-        prompt = voting_prompt.format(
+        prompt = self_assessment_prompt.format(
             my_name=agent_names[agent_id],
             my_id=agent_id,
-            question=question,
-            all_arguments=all_arguments
+            question=question
         )
-        
         response = llm.invoke([HumanMessage(content=prompt)])
         
-        vote_cast = None
-        response_lower = response.content.lower()
-        for aid, name in agent_names.items():
-            if name.lower() in response_lower:
-                vote_cast = name
-                votes[name] += 1
-                break
+        # Try to parse JSON from response
+        response_text = response.content.strip()
+        # Remove markdown code blocks if present
+        if "```json" in response_text:
+            response_text = response_text.split("```json")[1].split("```")[0].strip()
+        elif "```" in response_text:
+            response_text = response_text.split("```")[1].split("```")[0].strip()
         
-        if not vote_cast:
-            vote_match = re.search(r'Vote:\s*([A-Za-z]+)', response.content)
-            if vote_match:
-                potential_name = vote_match.group(1)
-                for aid, name in agent_names.items():
-                    if name.lower() == potential_name.lower():
-                        vote_cast = name
-                        votes[name] += 1
-                        break
+        try:
+            assessment = json.loads(response_text)
+        except json.JSONDecodeError:
+            # Fallback: try to extract JSON-like structure
+            print(f"  ⚠ Warning: Could not parse JSON for {agent_names[agent_id]}, using defaults")
+            assessment = {
+                "role_preferences": ["Solver", "Judge"],
+                "confidence_by_role": {"Solver": 0.5, "Judge": 0.5},
+                "reasoning": response.content
+            }
         
-        vote_details.append({
-            "voter": agent_names[agent_id],
-            "voted_for": vote_cast or "Unknown",
-            "justification": response.content
-        })
-        print(f"\n  {agent_names[agent_id]:12} voted for: {vote_cast or 'Unknown'}")
+        assessment["agent_id"] = agent_id
+        assessment["agent_name"] = agent_names[agent_id]
+        assessment["raw_response"] = response.content
+        
+        self_assessments.append(assessment)
+        
+        print(f"\n  ✓ {agent_names[agent_id]}'s self-assessment:")
+        print(f"  {'-'*60}")
+        print(f"  Preferred roles: {assessment.get('role_preferences', [])}")
+        print(f"  Confidence - Solver: {assessment.get('confidence_by_role', {}).get('Solver', 0):.2f}")
+        print(f"  Confidence - Judge: {assessment.get('confidence_by_role', {}).get('Judge', 0):.2f}")
+        print(f"  Reasoning: {assessment.get('reasoning', 'N/A')[:100]}...")
+        print(f"  {'-'*60}")
     
     print("="*80 + "\n")
-    return votes, vote_details
+    return self_assessments
+
+
+def algorithmic_role_assignment(self_assessments: list) -> tuple:
+    """
+    Stage 0.5: Deterministic algorithm to assign roles.
+    Algorithm: 
+    1. Select judge as agent with highest Judge confidence
+    2. If tie, prefer agent who also prefers Judge role
+    3. Remaining agents become solvers
+    """
+    print("="*80)
+    print("STAGE 0.5: ALGORITHMIC ROLE ASSIGNMENT")
+    print("="*80)
+    
+    # Extract confidence scores
+    judge_scores = []
+    for assessment in self_assessments:
+        agent_id = assessment["agent_id"]
+        agent_name = assessment["agent_name"]
+        confidence_by_role = assessment.get("confidence_by_role", {})
+        judge_confidence = confidence_by_role.get("Judge", 0.5)
+        solver_confidence = confidence_by_role.get("Solver", 0.5)
+        role_preferences = assessment.get("role_preferences", [])
+        prefers_judge = "Judge" in role_preferences and role_preferences.index("Judge") < role_preferences.index("Solver") if "Solver" in role_preferences else "Judge" in role_preferences
+        
+        judge_scores.append({
+            "agent_id": agent_id,
+            "agent_name": agent_name,
+            "judge_confidence": judge_confidence,
+            "solver_confidence": solver_confidence,
+            "prefers_judge": prefers_judge,
+            "preference_order": role_preferences
+        })
+    
+    # Sort by judge confidence (descending), then by preference
+    judge_scores.sort(key=lambda x: (
+        -x["judge_confidence"],  # Higher confidence first
+        -x["prefers_judge"]  # Prefer agents who want to be judge
+    ))
+    
+    # Select judge (highest confidence)
+    judge_assignment = judge_scores[0]
+    elected_judge_id = judge_assignment["agent_id"]
+    elected_judge_name = judge_assignment["agent_name"]
+    
+    # Remaining agents become solvers
+    solver_ids = [x["agent_id"] for x in judge_scores[1:]]
+    solver_names = [x["agent_name"] for x in judge_scores[1:]]
+    
+    print(f"\n  Algorithm selected:")
+    print(f"  Judge: {elected_judge_name} ({elected_judge_id})")
+    print(f"    - Judge confidence: {judge_assignment['judge_confidence']:.2f}")
+    print(f"    - Prefers Judge: {judge_assignment['prefers_judge']}")
+    print(f"\n  Solvers:")
+    for solver in judge_scores[1:]:
+        print(f"    - {solver['agent_name']} ({solver['agent_id']})")
+        print(f"      Judge confidence: {solver['judge_confidence']:.2f}, Solver confidence: {solver['solver_confidence']:.2f}")
+    
+    print("="*80 + "\n")
+    
+    return elected_judge_id, elected_judge_name, solver_ids, solver_names, judge_scores
 
 
 def judge_election_node(state: AgentState) -> AgentState:
     question = state["question"]
     
     print("\n" + "#"*80)
-    print("# node 1: judge election")
+    print("# STAGE 0 & 0.5: ROLE ASSIGNMENT")
     print("#"*80 + "\n")
     
     agent_names = agent_naming()
     
-    print("="*80)
-    print("phase 2: deliberation")
-    print("="*80)
-    deliberation_responses = run_agent_deliberation(question, agent_names)
+    # Stage 0: Self-assessment
+    self_assessments = run_role_self_assessment(question, agent_names)
     
-    votes, vote_details = run_agent_voting(question, agent_names, deliberation_responses)
-    
-    elected_judge_name = max(votes, key=votes.get)
-    elected_judge_id = [aid for aid, name in agent_names.items() if name == elected_judge_name][0]
-    
-    solver_ids = [aid for aid in LLM_AGENTS.keys() if aid != elected_judge_id]
-    solver_names = [agent_names[aid] for aid in solver_ids]
+    # Stage 0.5: Algorithmic role assignment
+    elected_judge_id, elected_judge_name, solver_ids, solver_names, assignment_details = algorithmic_role_assignment(self_assessments)
     
     field = "STEM"
     question_type = "general"
-    first_analysis = deliberation_responses[0]["response"].lower()
-    if "math" in first_analysis:
-        question_type = "math"
-    elif "physic" in first_analysis:
-        question_type = "physics"
-    elif "chemistry" in first_analysis or "chemical" in first_analysis:
-        question_type = "chemistry"
+    # Try to infer question type from first assessment reasoning
+    if self_assessments:
+        first_reasoning = self_assessments[0].get("reasoning", "").lower()
+        if "math" in first_reasoning or "mathematical" in first_reasoning:
+            question_type = "math"
+        elif "physic" in first_reasoning:
+            question_type = "physics"
+        elif "chemistry" in first_reasoning or "chemical" in first_reasoning:
+            question_type = "chemistry"
+        elif "logic" in first_reasoning:
+            question_type = "logic"
+        elif "game" in first_reasoning:
+            question_type = "game_theory"
     
     print("="*80)
-    print(f" elected judge: {elected_judge_name} ({elected_judge_id})")
-    print(f"vote results: {votes}")
-    print(f"solvers: {', '.join(solver_names)}")
+    print(f"ROLE ASSIGNMENT COMPLETE")
+    print(f"Judge: {elected_judge_name} ({elected_judge_id})")
+    print(f"Solvers: {', '.join(solver_names)}")
+    print(f"Question Type: {question_type}")
     print("="*80 + "\n")
     
     return {
         **state,
         "agent_names": agent_names,
-        "election_responses": deliberation_responses,
-        "judge_votes": votes,
+        "election_responses": self_assessments,  # Keep for compatibility, but now contains self-assessments
+        "judge_votes": {},  # No longer used, but keep for compatibility
         "elected_judge_name": elected_judge_name,
         "elected_judge_id": elected_judge_id,
         "solver_ids": solver_ids,
         "solver_names": solver_names,
         "field": field,
         "question_type": question_type,
+        "role_assignment_details": assignment_details,
         "messages": [
             AIMessage(
-                content=f"Judge Election Complete:\nElected: {elected_judge_name} ({elected_judge_id})\nVotes: {votes}\nSolvers: {', '.join(solver_names)}",
-                name="election_system"
+                content=f"Role Assignment Complete:\nJudge: {elected_judge_name} ({elected_judge_id})\nSolvers: {', '.join(solver_names)}",
+                name="role_assignment_system"
             )
         ]
     }
 
 
 def solver_node(state: AgentState) -> AgentState:
+    """
+    Solver node - runs all solver solutions in parallel using asyncio.
+    """
     print("\n" + "#"*80)
-    print("# node 2: solving phase")
+    print("# STAGE 1: INDEPENDENT SOLUTION GENERATION")
     print("#"*80 + "\n")
     
     question = state["question"]
@@ -1086,19 +1117,11 @@ def solver_node(state: AgentState) -> AgentState:
     agent_names = state["agent_names"]
     elected_judge_name = state["elected_judge_name"]
 
-    solver_answers = []
-    for agent_id in solver_ids:
-        agent_name = agent_names[agent_id]
-        solution = generate_solver_solution(
-            agent_id, agent_name, question, 
-            question_type, field, elected_judge_name
-        )
-        solver_answers.append({
-            "agent_id": agent_id,
-            "agent_name": agent_name,
-            "answer": solution
-        })
-        print(f"  {agent_name} completed solution")
+    # Run all solvers in parallel
+    solver_answers = asyncio.run(run_solvers_async(
+        solver_ids, agent_names, question, 
+        question_type, field, elected_judge_name
+    ))
     
     combined_answers = "\n\n---\n\n".join([
         f"Solution from {sol['agent_name']}:\n{sol['answer']}" 
@@ -1118,6 +1141,35 @@ def solver_node(state: AgentState) -> AgentState:
             )
         ]
     }
+
+
+async def run_solvers_async(solver_ids: List[str], agent_names: Dict[str, str], 
+                           question: str, question_type: str, field: str, 
+                           judge_name: str) -> List[Dict[str, Any]]:
+    """
+    Run all solver solutions concurrently.
+    """
+    async def solve_one(agent_id: str):
+        agent_name = agent_names[agent_id]
+        # Run synchronous LLM call in thread pool
+        loop = asyncio.get_event_loop()
+        solution = await loop.run_in_executor(
+            None,
+            generate_solver_solution,
+            agent_id, agent_name, question, question_type, field, judge_name
+        )
+        print(f"  ✓ {agent_name} completed solution")
+        return {
+            "agent_id": agent_id,
+            "agent_name": agent_name,
+            "answer": solution
+        }
+    
+    # Run all solvers concurrently
+    tasks = [solve_one(agent_id) for agent_id in solver_ids]
+    solver_answers = await asyncio.gather(*tasks)
+    
+    return solver_answers
 
 def generate_solver_solution(agent_id: str, agent_name: str, question: str, 
                             question_type: str, field: str, judge_name: str) -> str:
@@ -1160,42 +1212,18 @@ def generate_solver_solution(agent_id: str, agent_name: str, question: str,
 
 
 def critic_node(state: AgentState) -> AgentState:
+    """
+    Critic node - runs all peer reviews in parallel using asyncio.
+    """
     print("\n" + "#"*80)
-    print("# node 3: peer review phase")
+    print("# STAGE 2: PEER REVIEW ROUND")
     print("#"*80 + "\n")
     
     question = state["question"]
     solver_answers = state["solver_answers"]
     
-    critic_feedback = []
-    
-    for target_sol in solver_answers:
-        target_id = target_sol["agent_id"]
-        target_name = target_sol["agent_name"]
-        target_answer = target_sol["answer"]
-        
-        critics = [s for s in solver_answers if s["agent_id"] != target_id]
-        
-        print(f"\n--- reviews for {target_name} ---")
-        
-        for critic in critics:
-            critic_id = critic["agent_id"]
-            critic_name = critic["agent_name"]
-            
-            review = generate_critic_review(
-                critic_id, critic_name, 
-                target_name, target_answer, 
-                question
-            )
-            
-            critic_feedback.append({
-                "critic_id": critic_id,
-                "critic_name": critic_name,
-                "target_id": target_id,
-                "target_name": target_name,
-                "review": review
-            })
-            print(f"  {critic_name} reviewed {target_name}")
+    # Run all reviews in parallel
+    critic_feedback = asyncio.run(run_reviews_async(question, solver_answers))
 
     print("="*80 + "\n")
     
@@ -1209,6 +1237,53 @@ def critic_node(state: AgentState) -> AgentState:
             )
         ]
     }
+
+
+async def run_reviews_async(question: str, solver_answers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Run all peer reviews concurrently.
+    Each solver reviews the other two solvers' solutions.
+    """
+    async def review_one(critic: Dict[str, Any], target: Dict[str, Any]):
+        critic_id = critic["agent_id"]
+        critic_name = critic["agent_name"]
+        target_id = target["agent_id"]
+        target_name = target["agent_name"]
+        target_answer = target["answer"]
+        
+        # Run synchronous LLM call in thread pool
+        loop = asyncio.get_event_loop()
+        review = await loop.run_in_executor(
+            None,
+            generate_critic_review,
+            critic_id, critic_name, target_name, target_answer, question
+        )
+        
+        print(f"  ✓ {critic_name} reviewed {target_name}")
+        
+        return {
+            "critic_id": critic_id,
+            "critic_name": critic_name,
+            "target_id": target_id,
+            "target_name": target_name,
+            "review": review
+        }
+    
+    # Create all review tasks
+    tasks = []
+    for target_sol in solver_answers:
+        target_id = target_sol["agent_id"]
+        target_name = target_sol["agent_name"]
+        print(f"\n--- reviews for {target_name} ---")
+        
+        critics = [s for s in solver_answers if s["agent_id"] != target_id]
+        for critic in critics:
+            tasks.append(review_one(critic, target_sol))
+    
+    # Run all reviews concurrently
+    critic_feedback = await asyncio.gather(*tasks)
+    
+    return list(critic_feedback)
 
 def generate_critic_review(critic_id: str, critic_name: str, target_name: str, target_answer: str, question: str) -> str:
     llm = LLM_AGENTS[critic_id]
@@ -1313,15 +1388,21 @@ def generate_refined_solution(agent_id: str, agent_name: str, question: str, ori
     
     YOUR TASK:
     1. Analyze the feedback. Accept valid criticisms, defend against invalid ones.
-    2. Rewrite your solution to be perfect.    
+    2. Revise your solution incorporating valid feedback.
+    3. Produce a refined final solution.
+    
     OUTPUT FORMAT (JSON):
     {{
         "changes_made": [
-            {{"critique": "...", "response": "...", "action": "Fixed/Ignored"}}
+            {{"critique": "Step 5 was wrong", "response": "Fixed by...", "accepted": true}},
+            {{"critique": "Missing edge case", "response": "This case doesn't apply because...", "accepted": false}}
         ],
-        "refined_solution": "FULL REVISED SOLUTION TEXT HERE...",
-        "final_confidence": 0.0-1.0
-    }} """
+        "refined_solution": "FULL REVISED SOLUTION TEXT HERE with all steps and reasoning...",
+        "refined_answer": "THE FINAL ANSWER HERE (concise)",
+        "confidence": 0.90
+    }}
+    
+    IMPORTANT: Provide valid JSON only (no markdown code blocks)."""
     
     prompt = refine_prompt.format(
         agent_name=agent_name,
@@ -1335,19 +1416,35 @@ def generate_refined_solution(agent_id: str, agent_name: str, question: str, ori
 
 def final_verdict_node(state: AgentState) -> AgentState:
     print("\n" + "#"*80)
-    print("# node 5: final verdict")
+    print("# STAGE 4: FINAL JUDGMENT")
     print("#"*80 + "\n")
     
     question = state["question"]
+    solver_answers = state["solver_answers"]
+    critic_feedback = state["critic_feedback"]
     refined_answer_text = state["refined_answer"]
     judge_id = state["elected_judge_id"]
     judge_name = state["elected_judge_name"]
     
-    print(f"judge {judge_name} is deliberating...")
+    print(f"Judge {judge_name} is deliberating...")
     
-    verdict = generate_final_verdict(judge_id, judge_name, question, refined_answer_text)
+    # Prepare all information for the judge (as per PDF requirements)
+    original_solutions = "\n\n---\n\n".join([
+        f"ORIGINAL SOLUTION from {sol['agent_name']}:\n{sol['answer']}"
+        for sol in solver_answers
+    ])
     
-    print(f"\nfinal verdict:\n{verdict}")
+    peer_reviews = "\n\n---\n\n".join([
+        f"REVIEW by {review['critic_name']} of {review['target_name']}'s solution:\n{review['review']}"
+        for review in critic_feedback
+    ])
+    
+    verdict = generate_final_verdict(
+        judge_id, judge_name, question,
+        original_solutions, peer_reviews, refined_answer_text
+    )
+    
+    print(f"\nFinal Verdict:\n{verdict}")
     print("="*80 + "\n")
     
     return {
@@ -1361,31 +1458,45 @@ def final_verdict_node(state: AgentState) -> AgentState:
         ]
     }
 
-def generate_final_verdict(judge_id: str, judge_name: str, question: str, all_solutions_context: str) -> str:
+def generate_final_verdict(judge_id: str, judge_name: str, question: str, 
+                          original_solutions: str, peer_reviews: str, refined_solutions: str) -> str:
     llm = LLM_AGENTS[judge_id]
     
-    judge_prompt = """You are {judge_name}, the elected Judge.    
+    judge_prompt = """You are {judge_name}, the Judge selected through algorithmic role assignment.    
     QUESTION:
     {question}
     
-    REFINED SOLUTIONS FROM SOLVERS:
-    {all_solutions_context}
+    ALL THREE ORIGINAL SOLUTIONS:
+    {original_solutions}
+    
+    ALL PEER REVIEWS:
+    {peer_reviews}
+    
+    ALL THREE REFINED SOLUTIONS:
+    {refined_solutions}
     
     YOUR TASK:
-    1. Compare the final refined solutions.
-    2. Select the absolute best solution.
-    3. Provide a final, definitive answer to the user.    
+    1. Review all original solutions, peer reviews, and refined solutions.
+    2. Compare the final refined solutions.
+    3. Select the absolute best solution.
+    4. Provide a final, definitive answer to the user.
+    
     OUTPUT FORMAT (JSON):
     {{
         "winner": "Agent Name",
+        "confidence": 0.0-1.0,
         "reasoning": "Why this solution is best...",
         "final_answer_text": "The correct answer is..."
-    }} """
+    }}
+    
+    IMPORTANT: Provide valid JSON only (no markdown code blocks)."""
     
     prompt = judge_prompt.format(
         judge_name=judge_name,
         question=question,
-        all_solutions_context=all_solutions_context
+        original_solutions=original_solutions,
+        peer_reviews=peer_reviews,
+        refined_solutions=refined_solutions
     )
     
     response = llm.invoke([HumanMessage(content=prompt)])
